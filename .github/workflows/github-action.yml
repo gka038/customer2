@@ -1,0 +1,89 @@
+name: Run Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    permissions: write-all
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v3
+
+      - name: Get Pull Request Number
+        run: echo "PULL_NUMBER=$(echo "$GITHUB_REF" | awk -F / '{print $3}')" >> $GITHUB_ENV
+        shell: bash
+        id: test1
+
+      - name: Check if a PR for the same folder is open in Buffer repo 
+        id: test2
+        if: steps.test1.outcome == 'success'
+        run: |
+          python .github/workflows/check-buffer-pr.py ${{ env.PULL_NUMBER }}
+
+      - name: Make necessary changes by mixing ops and customer2 repo
+        id: test3
+        if: steps.test2.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.API_TOKEN_GITHUB }}
+        run: |
+          git clone https://github.com/gka038/ops-repo.git
+          git clone https://github.com/gka038/buffer-repo.git
+          cd buffer-repo 
+          GIT_CMD_REPOSITORY="https://gka038:$GH_TOKEN@github.com/gka038/buffer-repo.git"
+          INPUT_DESTINATION_HEAD_BRANCH="feat/customer2-pr-${{ env.PULL_NUMBER }}"
+          BRANCH_EXISTS=$(git show-ref "$INPUT_DESTINATION_HEAD_BRANCH" | wc -l)
+          echo "Checking if branch already exists"
+          git fetch -a
+          if [ $BRANCH_EXISTS == 1 ];
+          then
+              git checkout "$INPUT_DESTINATION_HEAD_BRANCH"
+          else
+              git checkout -b "$INPUT_DESTINATION_HEAD_BRANCH"
+          fi
+          echo "Setting git variables"
+          git config --global user.email "gautam.kumar@spryker.com"
+          git config --global user.name "gka038"
+          cp -r ../ops-repo/customer2/env1/* customer2/env1/
+          cp -r ../ops-repo/customer2/env2/* customer2/env2/
+          cp -r ../env1/* customer2/env1/
+          cp -r ../env2/* customer2/env2/
+          git add .
+          if git status | grep -q "Changes to be committed"
+          then
+            git commit --message "changes from customer2 repo"
+            if [ $BRANCH_EXISTS == 1 ];
+            then
+              echo "Pushing git commit"
+              git push "$GIT_CMD_REPOSITORY"
+              echo "Updating pull request"
+              CURRENT_BODY=$(gh pr view $INPUT_DESTINATION_HEAD_BRANCH --json body | jq '.body')
+              CURRENT_BODY=${CURRENT_BODY:1:${#CURRENT_BODY} - 2}
+              GITHUB_SHA=$(git rev-parse HEAD)
+              gh pr edit $INPUT_DESTINATION_HEAD_BRANCH -b "$CURRENT_BODY & https://github.com/gka038/buffer-repo/commit/$GITHUB_SHA"
+            else
+              echo "Pushing git commit"
+              git push "$GIT_CMD_REPOSITORY" --set-upstream $INPUT_DESTINATION_HEAD_BRANCH
+              echo "Creating a pull request"
+              GITHUB_SHA=$(git rev-parse HEAD)
+              INPUT_PR_TITLE="source PR: https://github.com/gka038/customer2/pull/${{ env.PULL_NUMBER }}"
+              gh pr create -t "$INPUT_PR_TITLE" \
+                          -b "https://github.com/gka038/buffer-repo/commit/$GITHUB_SHA" \
+                          -B main -H $INPUT_DESTINATION_HEAD_BRANCH 
+            fi
+          else
+            echo "No changes detected"
+          fi
+          
+      - name: Fail this till the buffer repo PR is not merged
+        id: test4
+        if: steps.test3.outcome == 'success'
+        run: | 
+          python .github/workflows/check-buffer-pr-status.py ${{ env.PULL_NUMBER }}
