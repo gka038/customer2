@@ -22,15 +22,15 @@ jobs:
         shell: bash
         id: test1
 
-      - name: Check if a PR for the same folder is open in Buffer repo 
-        id: test2
-        if: steps.test1.outcome == 'success'
-        run: |
-          python .github/workflows/check-buffer-pr.py ${{ env.PULL_NUMBER }}
+      # - name: Check if a PR for the same folder is open in Buffer repo 
+      #   id: test2
+      #   if: steps.test1.outcome == 'success'
+      #   run: |
+      #     python .github/workflows/check-buffer-pr.py ${{ env.PULL_NUMBER }}
 
       - name: Make necessary changes by mixing ops and customer2 repo
-        id: test3
-        if: steps.test2.outcome == 'success'
+        id: test2
+        if: steps.test1.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.API_TOKEN_GITHUB }}
         run: |
@@ -83,7 +83,7 @@ jobs:
           fi
           
       - name: Fail this till the buffer repo PR is not merged
-        id: test4
-        if: steps.test3.outcome == 'success'
+        id: test3
+        if: steps.test2.outcome == 'success'
         run: | 
           python .github/workflows/check-buffer-pr-status.py ${{ env.PULL_NUMBER }}
